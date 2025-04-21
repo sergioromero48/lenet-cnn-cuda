@@ -21,23 +21,22 @@ __device__ inline double d_relu(double x){ return x>0?x:0; }
  */
 __global__
 void conv5_valid(const double* __restrict__ in,   // (C_in,H,W)
-                 const double* __restrict__ w,    // (C_out,C_in,5,5)
+                 const double* __restrict__ w,    // (C_in,C_out,5,5)
                  const double* __restrict__ bias, // (C_out)
                  double*       __restrict__ out,  // (C_out,H-4,W-4)
                  int C_in, int H, int W, int C_out)
 {
-    int c_out = blockIdx.z;                             // which output map
+    int c_out = blockIdx.z;
     int oy    = blockIdx.y * blockDim.y + threadIdx.y;
     int ox    = blockIdx.x * blockDim.x + threadIdx.x;
     int H_out = H - 4,  W_out = W - 4;
     if (oy >= H_out || ox >= W_out) return;
 
     double sum = bias[c_out];
-    const double* w_base = w + c_out * C_in * 25;
 
-    for (int c = 0; c < C_in; ++c){
-        const double* w_ck = w_base + c * 25;
-        const double* in_c = in     + c * H * W;
+    for (int c = 0; c < C_in; ++c) {
+        const double* w_ck = w + ((c * C_out + c_out) * 25);
+        const double* in_c = in + c * H * W;
 #pragma unroll
         for (int ky = 0; ky < 5; ++ky)
 #pragma unroll
@@ -45,8 +44,9 @@ void conv5_valid(const double* __restrict__ in,   // (C_in,H,W)
                 sum += in_c[(oy + ky) * W + (ox + kx)] *
                        w_ck[ky * 5 + kx];
     }
-    out[c_out * H_out * W_out + oy * W_out + ox] = d_relu(sum);
+    out[c_out * H_out * W_out + oy * W_out + ox] = (sum > 0.0 ? sum : 0.0);
 }
+
 
 /* ───────────── 2×2 max‑pool, stride 2 ─────────── */
 __global__
@@ -97,18 +97,18 @@ static T* h2d(const T* h, size_t bytes){
 void forward_cuda(const LeNet5* net, Feature* feat)
 {
     /* upload weights & biases */
-    double* d_w01 = h2d(net->weight0_1, sizeof(net->weight0_1));
-    double* d_b01 = h2d(net->bias0_1  , sizeof(net->bias0_1 ));
-    double* d_w23 = h2d(net->weight2_3, sizeof(net->weight2_3));
-    double* d_b23 = h2d(net->bias2_3  , sizeof(net->bias2_3 ));
-    double* d_w45 = h2d(net->weight4_5, sizeof(net->weight4_5));
-    double* d_b45 = h2d(net->bias4_5  , sizeof(net->bias4_5 ));
-    double* d_w56 = h2d(net->weight5_6, sizeof(net->weight5_6));
-    double* d_b56 = h2d(net->bias5_6  , sizeof(net->bias5_6 ));
+    double* d_w01 = h2d((const double*)net->weight0_1, sizeof(net->weight0_1));
+    double* d_b01 = h2d((const double*)net->bias0_1  , sizeof(net->bias0_1 ));
+    double* d_w23 = h2d((const double*)net->weight2_3, sizeof(net->weight2_3));
+    double* d_b23 = h2d((const double*)net->bias2_3  , sizeof(net->bias2_3 ));
+    double* d_w45 = h2d((const double*)net->weight4_5, sizeof(net->weight4_5));
+    double* d_b45 = h2d((const double*)net->bias4_5  , sizeof(net->bias4_5 ));
+    double* d_w56 = h2d((const double*)net->weight5_6, sizeof(net->weight5_6));
+    double* d_b56 = h2d((const double*)net->bias5_6  , sizeof(net->bias5_6 ));
 
     /* stage buffers */
     double *d_in, *d_c1, *d_p1, *d_c2, *d_p2, *d_c3, *d_out;
-    d_in = h2d(feat->input, sizeof(feat->input));           // (1,32,32)
+    d_in = h2d((const double*)feat->input, sizeof(feat->input));           // (1,32,32)
     cudaMalloc(&d_c1, 6  * 28 * 28 * sizeof(double));
     cudaMalloc(&d_p1, 6  * 14 * 14 * sizeof(double));
     cudaMalloc(&d_c2, 16 * 10 * 10 * sizeof(double));

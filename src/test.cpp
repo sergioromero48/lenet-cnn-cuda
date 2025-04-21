@@ -1,24 +1,103 @@
 #include <iostream>
-#include <cstring>  // for memset
+#include <fstream>
+#include <sstream>
+#include <vector>
+#include <chrono>
+#include <cstring>
+#include <cstdio>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 #include "lenet.h"
-#include "lenet.cuh"
+#include "lenet_cuda.h"
 
-const int MNIST_SIZE = 28;
-const int PADDED_SIZE = 32;
+int load(LeNet5 *lenet, const char *filename);
+#ifdef __cplusplus
+}
+#endif
 
-void pad_mnist_to_32x32(const unsigned char* mnist_784, unsigned char* padded_1024) {
-    // Step 1: Initialize 32x32 output to zeros
-    std::memset(padded_1024, 0, PADDED_SIZE * PADDED_SIZE * sizeof(unsigned char));
-
-    // Step 2: Calculate offset
-    int offset = (PADDED_SIZE - MNIST_SIZE) / 2;
-
-    // Step 3: Copy MNIST into center of 32x32
-    for (int y = 0; y < MNIST_SIZE; y++) {
-        for (int x = 0; x < MNIST_SIZE; x++) {
-            int padded_index = (y + offset) * PADDED_SIZE + (x + offset);
-            padded_1024[padded_index] = mnist_784[y * MNIST_SIZE + x];
-        }
-    }
+// define load() here so we don't need main.c
+extern "C" int load(LeNet5 *lenet, const char *filename) {
+    FILE *fp = fopen(filename, "rb");
+    if (!fp) return 1;
+    fread(lenet, sizeof(LeNet5), 1, fp);
+    fclose(fp);
+    return 0;
 }
 
+const int MNIST_SIZE = 28;
+//const int PADDED_SIZE = 32; (unused)
+const char*  MODEL_FILE = "model/model.dat";
+const char*  CSV_FILE   = "data/mnist_test-1.csv";
+
+int main()
+{
+    // 1) Read first CSV row
+    std::ifstream ifs(CSV_FILE);
+    if (!ifs) {
+        std::cerr << "Error: cannot open " << CSV_FILE << "\n";
+        return 1;
+    }
+    std::string line;
+    std::getline(ifs, line);
+    ifs.close();
+
+    std::stringstream ss(line);
+    std::string tok;
+    std::vector<unsigned char> mnist;
+    mnist.reserve(MNIST_SIZE * MNIST_SIZE);
+
+    /* discard leading label */
+    std::getline(ss, tok, ',');
+
+    while (std::getline(ss, tok, ',')) {
+        if (tok.empty()) continue;          // skip blank tokens
+        int val = std::stoi(tok);           // throws if not an int
+        if (val < 0 || val > 255) {
+            std::cerr << "Bad pixel value: " << val << '\n';
+            return 1;
+        }
+        mnist.push_back(static_cast<unsigned char>(val));
+    }
+
+    if (mnist.size() != MNIST_SIZE*MNIST_SIZE) {
+        std::cerr << "Error: expected "
+                  << MNIST_SIZE*MNIST_SIZE
+                  << " values, got " << mnist.size() << "\n";
+        return 1;
+    }
+
+    // 2) Convert to image type
+    image img;
+    for(int y = 0; y < MNIST_SIZE; ++y)
+      for(int x = 0; x < MNIST_SIZE; ++x)
+        img[y][x] = mnist[y*MNIST_SIZE + x];
+
+    // 3) Load or initialize LeNet5
+    LeNet5 net;
+    if ( load(&net, MODEL_FILE) ) {
+        Initial(&net);
+    }
+
+    // 4) Benchmark CPU Predict
+    auto t0 = std::chrono::high_resolution_clock::now();
+    uint8 cpu_pred = Predict(&net, img, 10);
+    auto t1 = std::chrono::high_resolution_clock::now();
+    auto cpu_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+
+    // 5) Benchmark GPU Predict_CUDA
+    auto t2 = std::chrono::high_resolution_clock::now();
+    uint8 gpu_pred = Predict_CUDA(&net, img, 10);
+    auto t3 = std::chrono::high_resolution_clock::now();
+    auto gpu_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count();
+
+    // 6) Report
+    std::cout
+      << "Predict (CPU)       : label=" << int(cpu_pred)
+      << "  time=" << cpu_ms << " ms\n"
+      << "Predict_CUDA (GPU)  : label=" << int(gpu_pred)
+      << "  time=" << gpu_ms << " ms\n";
+
+    return 0;
+}

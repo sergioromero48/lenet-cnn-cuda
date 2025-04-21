@@ -147,7 +147,7 @@ static void backward(LeNet5 *lenet, LeNet5 *deltas, Feature *errors, Feature *fe
 	CONVOLUTION_BACKWARD(features->input, errors->input, errors->layer1, lenet->weight0_1, deltas->weight0_1, deltas->bias0_1, actiongrad);
 }
 
-static inline void load_input(Feature *features, image input)
+void load_input(Feature *features, image input)
 {
 	double (*layer0)[LENGTH_FEATURE0][LENGTH_FEATURE0] = features->input;
 	const long sz = sizeof(image) / sizeof(**input);
