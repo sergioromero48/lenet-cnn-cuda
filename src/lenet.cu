@@ -13,6 +13,9 @@
 #include <cuda_runtime.h>
 #include "lenet_cuda.h"
 
+// persistent device buffers for weights and biases
+static double *d_w01, *d_b01, *d_w23, *d_b23, *d_w45, *d_b45, *d_w56, *d_b56;
+
 /* ───────────── helper: device ReLU ───────────── */
 __device__ inline double d_relu(double x){ return x>0?x:0; }
 
@@ -93,18 +96,38 @@ static T* h2d(const T* h, size_t bytes){
     return d;
 }
 
+// initialize GPU weight buffers
+void Init_CUDA(const LeNet5* net) {
+    cudaMalloc(&d_w01, sizeof(net->weight0_1));
+    cudaMemcpy(d_w01, net->weight0_1, sizeof(net->weight0_1), cudaMemcpyHostToDevice);
+    cudaMalloc(&d_b01, sizeof(net->bias0_1));
+    cudaMemcpy(d_b01, net->bias0_1, sizeof(net->bias0_1), cudaMemcpyHostToDevice);
+    cudaMalloc(&d_w23, sizeof(net->weight2_3));
+    cudaMemcpy(d_w23, net->weight2_3, sizeof(net->weight2_3), cudaMemcpyHostToDevice);
+    cudaMalloc(&d_b23, sizeof(net->bias2_3));
+    cudaMemcpy(d_b23, net->bias2_3, sizeof(net->bias2_3), cudaMemcpyHostToDevice);
+    cudaMalloc(&d_w45, sizeof(net->weight4_5));
+    cudaMemcpy(d_w45, net->weight4_5, sizeof(net->weight4_5), cudaMemcpyHostToDevice);
+    cudaMalloc(&d_b45, sizeof(net->bias4_5));
+    cudaMemcpy(d_b45, net->bias4_5, sizeof(net->bias4_5), cudaMemcpyHostToDevice);
+    cudaMalloc(&d_w56, sizeof(net->weight5_6));
+    cudaMemcpy(d_w56, net->weight5_6, sizeof(net->weight5_6), cudaMemcpyHostToDevice);
+    cudaMalloc(&d_b56, sizeof(net->bias5_6));
+    cudaMemcpy(d_b56, net->bias5_6, sizeof(net->bias5_6), cudaMemcpyHostToDevice);
+}
+
+// cleanup GPU buffers
+void Cleanup_CUDA(void) {
+    cudaFree(d_w01); cudaFree(d_b01);
+    cudaFree(d_w23); cudaFree(d_b23);
+    cudaFree(d_w45); cudaFree(d_b45);
+    cudaFree(d_w56); cudaFree(d_b56);
+}
+
 /* --------------------- forward_cuda --------------------- */
 void forward_cuda(const LeNet5* net, Feature* feat)
 {
-    /* upload weights & biases */
-    double* d_w01 = h2d((const double*)net->weight0_1, sizeof(net->weight0_1));
-    double* d_b01 = h2d((const double*)net->bias0_1  , sizeof(net->bias0_1 ));
-    double* d_w23 = h2d((const double*)net->weight2_3, sizeof(net->weight2_3));
-    double* d_b23 = h2d((const double*)net->bias2_3  , sizeof(net->bias2_3 ));
-    double* d_w45 = h2d((const double*)net->weight4_5, sizeof(net->weight4_5));
-    double* d_b45 = h2d((const double*)net->bias4_5  , sizeof(net->bias4_5 ));
-    double* d_w56 = h2d((const double*)net->weight5_6, sizeof(net->weight5_6));
-    double* d_b56 = h2d((const double*)net->bias5_6  , sizeof(net->bias5_6 ));
+    // use persistent device buffers allocated in Init_CUDA
 
     /* stage buffers */
     double *d_in, *d_c1, *d_p1, *d_c2, *d_p2, *d_c3, *d_out;
@@ -147,13 +170,9 @@ void forward_cuda(const LeNet5* net, Feature* feat)
     /* optional: copy layer5 if you need it */
     cudaMemcpy(feat->layer5,d_c3,120*sizeof(double),cudaMemcpyDeviceToHost);
 
-    /* free GPU buffers */
+    // free only stage buffers
     cudaFree(d_in); cudaFree(d_c1); cudaFree(d_p1);
     cudaFree(d_c2); cudaFree(d_p2); cudaFree(d_c3); cudaFree(d_out);
-    cudaFree(d_w01); cudaFree(d_b01);
-    cudaFree(d_w23); cudaFree(d_b23);
-    cudaFree(d_w45); cudaFree(d_b45);
-    cudaFree(d_w56); cudaFree(d_b56);
 }
 
 /* --------------------- Predict_CUDA -------------------- */

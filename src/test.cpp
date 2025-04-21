@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstring>
 #include <cstdio>
+#include <unistd.h> // for sleep()
 
 #ifdef __cplusplus
 extern "C" {
@@ -79,25 +80,30 @@ int main()
     if ( load(&net, MODEL_FILE) ) {
         Initial(&net);
     }
+    // initialize GPU buffers
+    Init_CUDA(&net);
 
     // 4) Benchmark CPU Predict
     auto t0 = std::chrono::high_resolution_clock::now();
     uint8 cpu_pred = Predict(&net, img, 10);
     auto t1 = std::chrono::high_resolution_clock::now();
-    auto cpu_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
-
-    // 5) Benchmark GPU Predict_CUDA
-    auto t2 = std::chrono::high_resolution_clock::now();
+    auto cpu_us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+    
+    // 5) Benchmark GPU Predict_CUDA using CUDA events for timing
+    auto t0_gpu = std::chrono::high_resolution_clock::now();
     uint8 gpu_pred = Predict_CUDA(&net, img, 10);
-    auto t3 = std::chrono::high_resolution_clock::now();
-    auto gpu_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count();
+    auto t1_gpu = std::chrono::high_resolution_clock::now();
+    auto gpu_us = std::chrono::duration_cast<std::chrono::microseconds>(t1_gpu - t0_gpu).count();
 
     // 6) Report
     std::cout
       << "Predict (CPU)       : label=" << int(cpu_pred)
-      << "  time=" << cpu_ms << " ms\n"
+      << "  time=" << cpu_us << " us\n"
       << "Predict_CUDA (GPU)  : label=" << int(gpu_pred)
-      << "  time=" << gpu_ms << " ms\n";
+      << "  time=" << gpu_us << " us\n";
+
+    // cleanup GPU buffers
+    Cleanup_CUDA();
 
     return 0;
 }
