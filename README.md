@@ -1,5 +1,10 @@
 # Run Instructions
 
+## Clean Binaries
+```bash
+make clean
+```
+
 ## Build
 ```bash
 make
