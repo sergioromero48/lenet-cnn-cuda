@@ -1,5 +1,7 @@
 #include <iostream>
 #include <cstring>  // for memset
+#include "lenet.h"
+#include "lenet.cuh"
 
 const int MNIST_SIZE = 28;
 const int PADDED_SIZE = 32;
@@ -19,3 +21,4 @@ void pad_mnist_to_32x32(const unsigned char* mnist_784, unsigned char* padded_10
         }
     }
 }
+
