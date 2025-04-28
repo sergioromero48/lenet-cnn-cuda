@@ -3,6 +3,7 @@
 #include <time.h>
 #include <stdlib.h>
 #include <math.h>
+#include <stdint.h>
 
 #define GETLENGTH(array) (sizeof(array)/sizeof(*(array)))
 
@@ -27,15 +28,28 @@
 				FOREACH(w1,GETLENGTH(*(weight)))										\
 					(output)[i0 + w0][i1 + w1] += (input)[i0][i1] * (weight)[w0][w1];	\
 }
-
-#define CONVOLUTION_FORWARD(input,output,weight,bias,action)					\
-{																				\
-	for (int x = 0; x < GETLENGTH(weight); ++x)									\
-		for (int y = 0; y < GETLENGTH(*weight); ++y)							\
-			CONVOLUTE_VALID(input[x], output[y], weight[x][y]);					\
-	FOREACH(j, GETLENGTH(output))												\
-		FOREACH(i, GETCOUNT(output[j]))											\
-		((double *)output[j])[i] = action(((double *)output[j])[i] + bias[j]);	\
+// Added printing, quantization, and dequantization here
+#define CONVOLUTION_FORWARD_QA(input, output, weight, bias, action, scale_w, scale_b) \
+{ \
+    for (int x = 0; x < GETLENGTH(weight); ++x) \
+        for (int y = 0; y < GETLENGTH(*weight); ++y) \
+            FOREACH(i0, GETLENGTH(*(input))) \
+                FOREACH(i1, GETLENGTH(**(input))) \
+                    FOREACH(w0, GETLENGTH(weight[x][y])) \
+                        FOREACH(w1, GETLENGTH(*(weight[x][y]))) { \
+							print_original(weight[x][y][w0][w1]);\ 
+                            int8_t q_weight = quantize(weight[x][y][w0][w1], scale_w); \
+							print_quantized(q_weight);\
+                            double dq_weight = dequantize(q_weight, scale_w); \
+							print_dequantized(dq_weight);\
+                            (output[y][i0][i1]) += (input[x][i0 + w0][i1 + w1]) * dq_weight; \
+                        } \
+    FOREACH(j, GETLENGTH(output)) \
+        FOREACH(i, GETCOUNT(output[j])) { \
+            int8_t q_bias = quantize(bias[j], scale_b); \
+            double dq_bias = dequantize(q_bias, scale_b); \
+            ((double *)output[j])[i] = action(((double *)output[j])[i] + dq_bias); \
+        } \
 }
 
 #define CONVOLUTION_BACKWARD(input,inerror,outerror,weight,wd,bd,actiongrad)\
@@ -93,14 +107,24 @@
 		inerror[i][o0*len0 + x0][o1*len1 + x1] = outerror[i][o0][o1];							\
 	}																							\
 }
-
-#define DOT_PRODUCT_FORWARD(input,output,weight,bias,action)				\
-{																			\
-	for (int x = 0; x < GETLENGTH(weight); ++x)								\
-		for (int y = 0; y < GETLENGTH(*weight); ++y)						\
-			((double *)output)[y] += ((double *)input)[x] * weight[x][y];	\
-	FOREACH(j, GETLENGTH(bias))												\
-		((double *)output)[j] = action(((double *)output)[j] + bias[j]);	\
+// Added printing, quantization, and dequantization here
+#define DOT_PRODUCT_FORWARD_QA(input,output,weight,bias,action, input_scale, weight_scale, bias_scale) \
+{                                                                                                             \
+    int input_len = GETLENGTH(weight);                                                                        \
+    int output_len = GETLENGTH(*weight);                                                                      \
+    for (int y = 0; y < output_len; ++y)                                                                      \
+        ((double *)output)[y] = 0.0; /* clear output */                                                       \
+    for (int x = 0; x < input_len; ++x) {                                                                     \
+        for (int y = 0; y < output_len; ++y) {                                                                \
+            double input_val = ((int8_t *)input)[x] * input_scale;                                             \
+            double weight_val = ((int8_t *)weight)[x * output_len + y] * weight_scale;                        \
+            ((double *)output)[y] += input_val * weight_val;                                                  \
+        }                                                                                                    \
+    }                                                                                                        \
+    for (int j = 0; j < output_len; ++j) {                                                                    \
+        double bias_val = ((int32_t *)bias)[j] * bias_scale;                                                  \
+        ((double *)output)[j] = action(((double *)output)[j] + bias_val);                                     \
+    }                                                                                                        \
 }
 
 #define DOT_PRODUCT_BACKWARD(input,inerror,outerror,weight,wd,bd,actiongrad)	\
@@ -117,6 +141,8 @@
 			wd[x][y] += ((double *)input)[x] * ((double *)outerror)[y];			\
 }
 
+float input_scale = 127;
+
 double relu(double x)
 {
 	return x*(x > 0);
@@ -127,15 +153,56 @@ double relugrad(double y)
 	return y > 0;
 }
 
-static void forward(LeNet5 *lenet, Feature *features, double(*action)(double))
-{
-	CONVOLUTION_FORWARD(features->input, features->layer1, lenet->weight0_1, lenet->bias0_1, action);
-	SUBSAMP_MAX_FORWARD(features->layer1, features->layer2);
-	CONVOLUTION_FORWARD(features->layer2, features->layer3, lenet->weight2_3, lenet->bias2_3, action);
-	SUBSAMP_MAX_FORWARD(features->layer3, features->layer4);
-	CONVOLUTION_FORWARD(features->layer4, features->layer5, lenet->weight4_5, lenet->bias4_5, action);
-	DOT_PRODUCT_FORWARD(features->layer5, features->output, lenet->weight5_6, lenet->bias5_6, action);
+// Quantize floating to int8
+int8_t quantize(double x, double scale) {
+	
+	int q = (int)roundf(x / scale);
+    if (x >= 127){
+		q = 127;
+	} 
+    else if (x <= -127){
+		q = -127;
+	} 		
+	else if(q > 127){
+		q = 127;
+	}
+	else if(q < -127){
+		q = -127;
+	}
+    return (int8_t)q;
 }
+
+// Dequantize int8 back to float
+double dequantize(int8_t q, double scale) {
+    return ((double)q) * scale;
+}
+
+void print_original(float original_input){
+	printf("%11f\t", original_input);
+}
+
+void print_quantized(int8_t quant_input){
+	printf("%4d\t", quant_input);
+}
+
+void print_dequantized(float dequant_input){
+	printf("%10f\n", dequant_input);
+}
+
+static void forward_qa(LeNet5 *lenet, Feature *features, double(*action)(double))
+{
+	// scale for quantization
+    double scale_w = 1;
+    double scale_b = 1; 
+	// calling functions with scale added in
+    CONVOLUTION_FORWARD_QA(features->input, features->layer1, lenet->weight0_1, lenet->bias0_1, action, scale_w, scale_b);
+    SUBSAMP_MAX_FORWARD(features->layer1, features->layer2);
+    CONVOLUTION_FORWARD_QA(features->layer2, features->layer3, lenet->weight2_3, lenet->bias2_3, action, scale_w, scale_b);
+    SUBSAMP_MAX_FORWARD(features->layer3, features->layer4);
+    CONVOLUTION_FORWARD_QA(features->layer4, features->layer5, lenet->weight4_5, lenet->bias4_5, action, scale_w, scale_b);
+    DOT_PRODUCT_FORWARD_QA(features->layer5, features->output, lenet->weight5_6, lenet->bias5_6, action, input_scale, scale_w, scale_b);
+}
+
 
 static void backward(LeNet5 *lenet, LeNet5 *deltas, Feature *errors, Feature *features, double(*actiongrad)(double))
 {
@@ -239,7 +306,7 @@ void TrainBatch(LeNet5 *lenet, image *inputs, uint8 *labels, int batchSize)
 		Feature errors = { 0 };
 		LeNet5	deltas = { 0 };
 		load_input(&features, inputs[i]);
-		forward(lenet, &features, relu);
+		forward_qa(lenet, &features, relu);
 		load_target(&features, &errors, labels[i]);
 		backward(lenet, &deltas, &errors, &features, relugrad);
 		#pragma omp critical
@@ -259,7 +326,7 @@ void Train(LeNet5 *lenet, image input, uint8 label)
 	Feature errors = { 0 };
 	LeNet5 deltas = { 0 };
 	load_input(&features, input);
-	forward(lenet, &features, relu);
+	forward_qa(lenet, &features, relu);
 	load_target(&features, &errors, label);
 	backward(lenet, &deltas, &errors, &features, relugrad);
 	FOREACH(i, GETCOUNT(LeNet5))
@@ -270,7 +337,7 @@ uint8 Predict(LeNet5 *lenet, image input,uint8 count)
 {
 	Feature features = { 0 };
 	load_input(&features, input);
-	forward(lenet, &features, relu);
+	forward_qa(lenet, &features, relu);
 	return get_result(&features, count);
 }
 

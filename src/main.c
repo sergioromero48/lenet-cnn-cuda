@@ -68,10 +68,15 @@ int load(LeNet5 *lenet, char filename[])
 	return 0;
 }
 
-
-
 void foo()
 {
+	Feature.input_size = INPUT;
+	Feature.layer1_size = LAYER1;
+	Feature.layer2_size = LAYER2;
+	Feature.layer3_size = LAYER3;
+	Feature.layer4_size = LAYER4;
+	Feature.layer5_size = LAYER5;
+	Feature.output_size = OUTPUT;
 	image *train_data = (image *)calloc(COUNT_TRAIN, sizeof(image));
 	uint8 *train_label = (uint8 *)calloc(COUNT_TRAIN, sizeof(uint8));
 	image *test_data = (image *)calloc(COUNT_TEST, sizeof(image));
