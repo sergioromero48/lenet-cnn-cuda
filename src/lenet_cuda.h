@@ -4,17 +4,11 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-/* Convenience wrapper: full forward pass that
-   calls conv1_cuda_forward, then finishes the
-   remaining layers on the CPU. */
-uint8 Predict_CUDA(const LeNet5* lenet, image img, uint8 count);
 
-// initialize GPU device buffers and upload weights
-void Init_CUDA(const LeNet5* lenet);
-// free GPU device buffers
-void Cleanup_CUDA(void);
-
-void load_input(Feature*, image);   /* defined in lenet.c */
+/* implemented in a .cu file */
+uint8 predict_cuda(LeNet5 *lenet, image input, uint8 count);
+void lenet_cuda_init(const LeNet5 *hostNet);
+void lenet_cuda_free();
 
 #ifdef __cplusplus
 }

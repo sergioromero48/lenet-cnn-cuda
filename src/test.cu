@@ -265,25 +265,25 @@ void forward_cuda(LeNet5 *lenet, Feature *features)
 
     // ---- Layer 5: Conv3 (16×5×5 → 120×1×1), 5×5 kernels ----
     {
-        const int inChannels  = LAYER4;              // 16
-        const int outChannels = LAYER5;              // 120
-        const int inHeight    = LENGTH_FEATURE4;     // 5
-        const int inWidth     = LENGTH_FEATURE4;     // 5
-        const int kH = LENGTH_KERNEL;                // 5
-        const int kW = LENGTH_KERNEL;                // 5
-        // valid conv → outH = outW = LENGTH_FEATURE5 = 1
-    
+        const int inChannels    = 16;           // 16
+        const int outChannels   = 120;           // 120
+        const int inHeight      = 5;  // 5
+        const int inWidth       = 5;  // 5
+        const int kernelHeight  = 5;    // 5
+        const int kernelWidth   = 5;    // 5
+        // valid conv → outHeight = outWidth = LENGTH_FEATURE5 = 1
+
         dim3 block(1,1);
-        dim3 grid(1, 1, outChannels);   // <-- ✔ channels in grid.z
-    
-        conv_forward_kernel<<<grid, block>>>(
+        dim3 grid(outChannels);
+
+        conv_forward_kernel<<<grid,block>>>(
             (const double*)features->layer4,
             (      double*)features->layer5,
             (const double*)lenet->weight4_5,
             (const double*)lenet->bias4_5,
             inChannels, outChannels,
             inHeight,   inWidth,
-            kH, kW
+            kernelHeight, kernelWidth
         );
     }
 
@@ -305,48 +305,6 @@ void forward_cuda(LeNet5 *lenet, Feature *features)
     }
 
     // Wait for GPU to finish before returning
-    //cudaDeviceSynchronize();
+    cudaDeviceSynchronize();
 }
 
-// lenet_runtime.cu  (compile once, keep globals alive)
-static LeNet5  *d_net  = nullptr;   // weights & biases
-static Feature *d_buf  = nullptr;   // scratch activations
-
-extern "C" void lenet_cuda_init(const LeNet5 *hostNet)
-{
-    cudaMalloc(&d_net, sizeof(LeNet5));
-    cudaMemcpy(d_net, hostNet, sizeof(LeNet5), cudaMemcpyHostToDevice);
-
-    cudaMalloc(&d_buf, sizeof(Feature));
-    cudaMemset(d_buf, 0, sizeof(Feature));            // once is enough
-}
-
-extern "C" uint8 predict_cuda(LeNet5 *lenet, image input, uint8 count)
-{
-    /* upload only the 32×32×1 input slice (with padding) */
-    Feature h_feat{};               // zero on stack
-    load_input(&h_feat, input);     // fills h_feat.input[..]
-    
-    // If this is the first call, initialize the GPU data
-    if (d_net == nullptr) {
-        lenet_cuda_init(lenet);
-    }
-    
-    cudaMemcpy(&d_buf->input, &h_feat.input,
-               sizeof(h_feat.input), cudaMemcpyHostToDevice);
-
-    forward_cuda(d_net, d_buf);     // launches 5 kernels, no sync inside
-
-    /* download the 10-way score vector */
-    cudaMemcpy(&h_feat.output, &d_buf->output,
-               sizeof(h_feat.output), cudaMemcpyDeviceToHost);
-
-    cudaDeviceSynchronize();        // single sync point
-    return get_result(&h_feat, count);
-}
-
-extern "C" void lenet_cuda_free()
-{
-    cudaFree(d_net);
-    cudaFree(d_buf);
-}

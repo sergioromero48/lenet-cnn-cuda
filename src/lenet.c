@@ -194,7 +194,7 @@ static void load_target(Feature *features, Feature *errors, int label)
 	softmax(output, error, label, GETCOUNT(features->output));
 }
 
-static uint8 get_result(Feature *features, uint8 count)
+uint8 get_result(Feature *features, uint8 count)
 {
 	double *output = (double *)features->output; 
 	const int outlen = GETCOUNT(features->output);

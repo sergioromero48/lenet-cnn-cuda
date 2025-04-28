@@ -81,7 +81,7 @@ int main()
         Initial(&net);
     }
     // initialize GPU buffers
-    Init_CUDA(&net);
+    lenet_cuda_init(&net);
 
     // 4) Benchmark CPU Predict
     auto t0 = std::chrono::high_resolution_clock::now();
@@ -91,7 +91,7 @@ int main()
     
     // 5) Benchmark GPU Predict_CUDA using CUDA events for timing
     auto t0_gpu = std::chrono::high_resolution_clock::now();
-    uint8 gpu_pred = Predict_CUDA(&net, img, 10);
+    uint8 gpu_pred = predict_cuda(&net, img, 10);
     auto t1_gpu = std::chrono::high_resolution_clock::now();
     auto gpu_us = std::chrono::duration_cast<std::chrono::microseconds>(t1_gpu - t0_gpu).count();
 
@@ -102,8 +102,7 @@ int main()
       << "Predict_CUDA (GPU)  : label=" << int(gpu_pred)
       << "  time=" << gpu_us << " us\n";
 
-    // cleanup GPU buffers
-    Cleanup_CUDA();
-
+    // 7) Free GPU buffers
+    lenet_cuda_free();
     return 0;
 }
