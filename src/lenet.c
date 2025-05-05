@@ -4,6 +4,18 @@
 #include <stdlib.h>
 #include <math.h>
 #include <stdint.h>
+#include <string.h>
+#include <stdio.h>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
+#ifndef PADDING
+#define PADDING (LENGTH_KERNEL/2)
+#endif
+
+// forward_qa prototype (in case header declaration was missed)
+void forward_qa(const LeNet5 *lenet, Feature *features, double (*action)(double));
 
 #define GETLENGTH(array) (sizeof(array)/sizeof(*(array)))
 
@@ -212,7 +224,7 @@ void prune_weights(LeNet5 *net, double rate)
         if (abs((int)w_begin[i]) <= kth) w_begin[i] = 0;
 }
 
-static void forward_qa(LeNet5 *lenet, Feature *features, double(*action)(double))
+static void forward_fp(LeNet5FP *lenet, Feature *features, double(*action)(double))
 {
 	// scale for quantization
     double scale_w = 1;
@@ -317,6 +329,108 @@ static double f64rand()
 	return *(double *)&lvalue - 3;
 }
 
+/* ------------------------------------------------------------------ */
+/*  Quant‑aware helpers – one global symmetric scale is enough to     */
+/*  prove the point.  Tune per‑layer later if you like.               */
+
+static inline int8_t q_s8(double x, double s)
+{
+    int v = (int)lrint(x / s);
+    if (v >  127) v =  127;
+    if (v < -128) v = -128;
+    return (int8_t)v;
+}
+static inline double dq_s8(int8_t q, double s) { return q * s; }
+
+/* Copy int8 → float ------------------------------------------------- */
+void int8_to_fp(const LeNet5 *src, LeNet5FP *dst, double s)
+{
+    const int8_t *p  = (const int8_t *)src;
+    double       *pd = (double       *)dst;
+    size_t N = sizeof(LeNet5);
+    for (size_t i = 0; i < N; ++i)               /* 470 kB → 3.8 MB   */
+        pd[i] = dq_s8(p[i], s);
+}
+
+/* Copy float → int8 ------------------------------------------------- */
+void fp_to_int8(const LeNet5FP *src, LeNet5 *dst, double s)
+{
+    const double *ps = (const double *)src;
+    int8_t       *pd = (int8_t       *)dst;
+    size_t N = sizeof(LeNet5);
+    for (size_t i = 0; i < N; ++i)
+        pd[i] = q_s8(ps[i], s);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Quant‑aware TrainBatch wrapper                                    */
+/* ------------------------------------------------------------------ */
+void TrainBatch_QAT(LeNet5 *qnet,
+                    image  *inputs,
+                    uint8  *labels,
+                    int     B,
+                    double  scale)
+{
+    static LeNet5FP fp;                 /* re‑used every call          */
+
+    /* 1) de‑quantise once */
+    int8_to_fp(qnet, &fp, scale);
+
+    /* 2) run the original float trainer (rename yours to TrainBatch_FP) */
+    /*    ↓↓↓ Paste the body of your previous TrainBatch here ↓↓↓        */
+
+    /* ----------------------------------------------------------------
+       Begin:  EXACT copy of your old TrainBatch, but operating on &fp
+       ----------------------------------------------------------------*/
+    double buffer[GETCOUNT(LeNet5)] = {0};
+#pragma omp parallel for
+    for (int i = 0; i < B; ++i)
+    {
+        Feature features = {0};
+        Feature errors   = {0};
+        LeNet5   deltas  = {0};
+
+        load_input(&features, inputs[i]);
+        forward_qa((LeNet5 *)&fp, &features, relu);
+        load_target(&features, &errors, labels[i]);
+        backward((LeNet5FP *)&fp, (LeNet5 *)&deltas, &errors, &features, relugrad);
+
+#pragma omp critical
+        {
+            FOREACH(j, GETCOUNT(LeNet5))
+                buffer[j] += ((double *)&deltas)[j];
+        }
+    }
+    double k = ALPHA / B;
+    FOREACH(i, GETCOUNT(LeNet5))
+        ((double *)&fp)[i] += k * buffer[i];
+    /* ----------------------------------------------------------------
+       End   (unchanged optimiser, still double precision)             */
+
+    /* 3) re‑quantise back to int8 */
+    fp_to_int8(&fp, qnet, scale);
+}
+
+// Quant-aware forward (uses int8 weights/biases + activation)
+void forward_qa(const LeNet5 *lenet, Feature *features, double (*action)(double))
+{
+    double scale_w = QSCALE, scale_b = QSCALE;
+    double input_scale = QSCALE;
+    CONVOLUTION_FORWARD_QA(features->input, features->layer1,
+                            lenet->weight0_1, lenet->bias0_1,
+                            action, scale_w, scale_b);
+    SUBSAMP_MAX_FORWARD(features->layer1, features->layer2);
+    CONVOLUTION_FORWARD_QA(features->layer2, features->layer3,
+                            lenet->weight2_3, lenet->bias2_3,
+                            action, scale_w, scale_b);
+    SUBSAMP_MAX_FORWARD(features->layer3, features->layer4);
+    CONVOLUTION_FORWARD_QA(features->layer4, features->layer5,
+                            lenet->weight4_5, lenet->bias4_5,
+                            action, scale_w, scale_b);
+    DOT_PRODUCT_FORWARD_QA(features->layer5, features->output,
+                           lenet->weight5_6, lenet->bias5_6,
+                           action, input_scale, scale_w, scale_b);
+}
 
 void TrainBatch(LeNet5 *lenet, image *inputs, uint8 *labels, int batchSize)
 {
@@ -355,6 +469,15 @@ void Train(LeNet5 *lenet, image input, uint8 label)
 	FOREACH(i, GETCOUNT(LeNet5))
 		((double *)lenet)[i] += ALPHA * ((double *)&deltas)[i];
 }
+/* lenet.c ----------------------------------------------------------- */
+static inline double  dq(int8_t q, double s)         { return q * s;                  }
+static inline int8_t  q (double x, double s)
+{
+    int v = (int)lrint(x / s);
+    if (v >  127) v =  127;
+    if (v < -128) v = -128;
+    return (int8_t)v;
+}
 
 uint8 Predict(LeNet5 *lenet, image input,uint8 count)
 {
@@ -364,12 +487,41 @@ uint8 Predict(LeNet5 *lenet, image input,uint8 count)
 	return get_result(&features, count);
 }
 
-void Initial(LeNet5 *lenet)
+#define QSCALE (1.0/64)
+
+void Initial(LeNet5 *qnet)
 {
-	for (double *pos = (double *)lenet->weight0_1; pos < (double *)lenet->bias0_1; *pos++ = f64rand());
-	for (double *pos = (double *)lenet->weight0_1; pos < (double *)lenet->weight2_3; *pos++ *= sqrt(6.0 / (LENGTH_KERNEL * LENGTH_KERNEL * (INPUT + LAYER1))));
-	for (double *pos = (double *)lenet->weight2_3; pos < (double *)lenet->weight4_5; *pos++ *= sqrt(6.0 / (LENGTH_KERNEL * LENGTH_KERNEL * (LAYER2 + LAYER3))));
-	for (double *pos = (double *)lenet->weight4_5; pos < (double *)lenet->weight5_6; *pos++ *= sqrt(6.0 / (LENGTH_KERNEL * LENGTH_KERNEL * (LAYER4 + LAYER5))));
-	for (double *pos = (double *)lenet->weight5_6; pos < (double *)lenet->bias0_1; *pos++ *= sqrt(6.0 / (LAYER5 + OUTPUT)));
-	for (int *pos = (int *)lenet->bias0_1; pos < (int *)(lenet + 1); *pos++ = 0);
+    LeNet5FP fp;        /* float‑precision workspace */
+    double *pos;
+
+    /* 1) exactly your original Xavier/He loops, but writing into fp */
+    for (pos = (double*)fp.weight0_1;
+         pos < (double*)fp.bias0_1;
+         *pos++ = f64rand());
+
+    for (pos = (double*)fp.weight0_1;
+         pos < (double*)fp.weight2_3;
+         *pos++ *= sqrt(6.0 / (LENGTH_KERNEL * LENGTH_KERNEL * (INPUT + LAYER1))));
+
+    for (pos = (double*)fp.weight2_3;
+         pos < (double*)fp.weight4_5;
+         *pos++ *= sqrt(6.0 / (LENGTH_KERNEL * LENGTH_KERNEL * (LAYER2 + LAYER3))));
+
+    for (pos = (double*)fp.weight4_5;
+         pos < (double*)fp.weight5_6;
+         *pos++ *= sqrt(6.0 / (LENGTH_KERNEL * LENGTH_KERNEL * (LAYER4 + LAYER5))));
+
+    for (pos = (double*)fp.weight5_6;
+         pos < (double*)fp.bias0_1;
+         *pos++ *= sqrt(6.0 / (LAYER5 + OUTPUT)));
+
+    /* zero out all biases (fp.bias0_1 → end‑of‑struct) */
+    for (pos = (double*)fp.bias0_1;
+         pos < (double*)(&fp + 1);
+         *pos++ = 0.0);
+
+    /* 2) quantise entire fp workspace back into your int8 model */
+    fp_to_int8(&fp, qnet, QSCALE);
 }
+
+/*  lenet.c  — QAT utilities + fixed TrainBatch_QAT  */

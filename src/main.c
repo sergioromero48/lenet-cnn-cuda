@@ -11,6 +11,7 @@
 #define COUNT_TRAIN				60000
 #define COUNT_TEST				10000
 
+#define QSCALE (1.0/64)
 
 int read_data(unsigned char(*data)[28][28], unsigned char label[], const int count, const char data_file[], const char label_file[])
 {
@@ -25,31 +26,57 @@ int read_data(unsigned char(*data)[28][28], unsigned char label[], const int cou
 	fclose(fp_label);
 	return 0;
 }
-
+/*
 void training(LeNet5 *lenet, image *train_data, uint8 *train_label,
 	int batch_size, int total_size) {
 
 	const int total_batches   = total_size / batch_size;
-	const int warmup_batches  = total_batches / 10;   /* 10 % */
-	const int prune_every     = 10;                   /* Y     */
+	const int warmup_batches  = total_batches / 10; 
+	const int prune_every     = 10;
 	int       batch_idx       = 0;
 
 	for (int i = 0, pc = 0; i <= total_size - batch_size; i += batch_size, ++batch_idx)
 	{
 	TrainBatch(lenet, train_data + i, train_label + i, batch_size);
 
-	/* pruning schedule: start after warm‑up, then every Y batches */
+	// pruning schedule: start after warm‑up, then every Y batches
 	if (batch_idx >= warmup_batches &&
 	((batch_idx - warmup_batches) % prune_every == 0))
 	{
-		prune_weights(lenet, 0.25);   /* X = 25 % */
+		prune_weights(lenet, 0.25);   // X = 25 %
 	}
 
 	if (i * 100 / total_size > pc)
 		printf("batch:%d  train:%2d%%\n", batch_size, pc = i * 100 / total_size);
 	}
 }
+*/
+void training_qat(LeNet5 *lenet, image *train_data, uint8 *train_label,
+	int batch_size, int total_size, double scale)
+	{
+	const int total_batches  = total_size / batch_size;
+	const int warmup_batches = total_batches / 10;
+	const int prune_every    = 10;
+	int batch_idx = 0;
 
+	for (int i = 0, pc = 0; i <= total_size - batch_size;
+	i += batch_size, ++batch_idx)
+	{
+	TrainBatch_QAT(lenet,              /* <-- NEW */
+			train_data + i,
+			train_label + i,
+			batch_size,
+			scale);
+
+	if (batch_idx >= warmup_batches &&
+	((batch_idx - warmup_batches) % prune_every == 0))
+	prune_weights(lenet, 0.25);
+
+	if (i * 100 / total_size > pc)
+	printf("batch:%d  train:%2d%%\n",
+		batch_size, pc = i * 100 / total_size);
+	}
+}
 
 int testing(LeNet5 *lenet, image *test_data, uint8 *test_label,int total_size)
 {
@@ -86,13 +113,6 @@ int load(LeNet5 *lenet, char filename[])
 void foo()
 {
 	Feature features;
-	features.input_size = INPUT;
-	features.layer1_size = LAYER1;
-	features.layer2_size = LAYER2;
-	features.layer3_size = LAYER3;
-	features.layer4_size = LAYER4;
-	features.layer5_size = LAYER5;
-	features.output_size = OUTPUT;
 	image *train_data = (image *)calloc(COUNT_TRAIN, sizeof(image));
 	uint8 *train_label = (uint8 *)calloc(COUNT_TRAIN, sizeof(uint8));
 	image *test_data = (image *)calloc(COUNT_TEST, sizeof(image));
@@ -113,16 +133,15 @@ void foo()
 	}
 
 
-	LeNet5 *lenet = (LeNet5 *)malloc(sizeof(LeNet5));
-	if (load(lenet, LENET_FILE))
-		Initial(lenet);
+	LeNet5 *lenet = (LeNet5 *)malloc(sizeof *lenet);
+	Initial(lenet);
 	clock_t start = clock();
 	int batches[] = { 300 };
 	for (int i = 0; i < sizeof(batches) / sizeof(*batches);++i)
-		training(lenet, train_data, train_label, batches[i],COUNT_TRAIN);
+		training_qat(lenet, train_data, train_label, batches[i],COUNT_TRAIN, QSCALE);
 	int right = testing(lenet, test_data, test_label, COUNT_TEST);
 	printf("%d/%d\n", right, COUNT_TEST);
-	printf("Time:%u\n", (unsigned)(clock() - start));
+	printf("Time: %.3f s\n", (double)(clock() - start) / CLOCKS_PER_SEC);
 	save(lenet, LENET_FILE);
 	free(lenet);
 	free(train_data);
