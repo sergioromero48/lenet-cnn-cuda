@@ -17,6 +17,7 @@ uint8 Predict(LeNet5 *lenet, image input, const char(*resMat)[OUTPUT], uint8 cou
 void Initial(LeNet5 *lenet);
 */
 #include <stdint.h>
+#include <stdio.h> 
 
 #pragma once
 
@@ -40,10 +41,14 @@ void Initial(LeNet5 *lenet);
 #define LAYER4			16
 #define LAYER5			120
 #define OUTPUT          10
-#define INT8_MAX_VAL 255
-#define INT8_MIN_VAL 0
+//#define INT8_MAX_VAL 255
+//#define INT8_MIN_VAL 0
 typedef unsigned char uint8;
 typedef uint8 image[28][28];
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 typedef struct LeNet5
 {
@@ -83,3 +88,7 @@ void Train(LeNet5 *lenet, image input, uint8 label);
 uint8 Predict(LeNet5 *lenet, image input, uint8 count);
 
 void Initial(LeNet5 *lenet);
+
+#ifdef __cplusplus
+}
+#endif

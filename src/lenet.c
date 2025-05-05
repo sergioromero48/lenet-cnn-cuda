@@ -37,11 +37,8 @@
                 FOREACH(i1, GETLENGTH(**(input))) \
                     FOREACH(w0, GETLENGTH(weight[x][y])) \
                         FOREACH(w1, GETLENGTH(*(weight[x][y]))) { \
-							print_original(weight[x][y][w0][w1]);\ 
                             int8_t q_weight = quantize(weight[x][y][w0][w1], scale_w); \
-							print_quantized(q_weight);\
                             double dq_weight = dequantize(q_weight, scale_w); \
-							print_dequantized(dq_weight);\
                             (output[y][i0][i1]) += (input[x][i0 + w0][i1 + w1]) * dq_weight; \
                         } \
     FOREACH(j, GETLENGTH(output)) \
