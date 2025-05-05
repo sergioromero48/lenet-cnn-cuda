@@ -26,15 +26,30 @@ int read_data(unsigned char(*data)[28][28], unsigned char label[], const int cou
 	return 0;
 }
 
-void training(LeNet5 *lenet, image *train_data, uint8 *train_label, int batch_size, int total_size)
-{
-	for (int i = 0, percent = 0; i <= total_size - batch_size; i += batch_size)
+void training(LeNet5 *lenet, image *train_data, uint8 *train_label,
+	int batch_size, int total_size) {
+
+	const int total_batches   = total_size / batch_size;
+	const int warmup_batches  = total_batches / 10;   /* 10 % */
+	const int prune_every     = 10;                   /* Y     */
+	int       batch_idx       = 0;
+
+	for (int i = 0, pc = 0; i <= total_size - batch_size; i += batch_size, ++batch_idx)
 	{
-		TrainBatch(lenet, train_data + i, train_label + i, batch_size);
-		if (i * 100 / total_size > percent)
-			printf("batchsize:%d\ttrain:%2d%%\n", batch_size, percent = i * 100 / total_size);
+	TrainBatch(lenet, train_data + i, train_label + i, batch_size);
+
+	/* pruning schedule: start after warm‑up, then every Y batches */
+	if (batch_idx >= warmup_batches &&
+	((batch_idx - warmup_batches) % prune_every == 0))
+	{
+		prune_weights(lenet, 0.25);   /* X = 25 % */
+	}
+
+	if (i * 100 / total_size > pc)
+		printf("batch:%d  train:%2d%%\n", batch_size, pc = i * 100 / total_size);
 	}
 }
+
 
 int testing(LeNet5 *lenet, image *test_data, uint8 *test_label,int total_size)
 {
@@ -87,14 +102,14 @@ void foo()
 		printf("ERROR!!!\nDataset File Not Find!Please Copy Dataset to the Floder Included the exe\n");
 		free(train_data);
 		free(train_label);
-		system("pause");
+		//system("pause");
 	}
 	if (read_data(test_data, test_label, COUNT_TEST, FILE_TEST_IMAGE, FILE_TEST_LABEL))
 	{
 		printf("ERROR!!!\nDataset File Not Find!Please Copy Dataset to the Floder Included the exe\n");
 		free(test_data);
 		free(test_label);
-		system("pause");
+		//system("pause");
 	}
 
 
@@ -114,7 +129,7 @@ void foo()
 	free(train_label);
 	free(test_data);
 	free(test_label);
-	system("pause");
+	//system("pause");
 }
 
 int main()

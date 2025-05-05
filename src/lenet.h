@@ -81,6 +81,10 @@ typedef struct Feature
 	int output_size;
 }Feature;
 
+static int abs_cmp(const void *a, const void *b);
+
+void prune_weights(LeNet5 *net, double rate);
+
 void TrainBatch(LeNet5 *lenet, image *inputs, uint8 *labels, int batchSize);
 
 void Train(LeNet5 *lenet, image input, uint8 label);

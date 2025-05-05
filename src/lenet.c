@@ -186,6 +186,32 @@ void print_dequantized(float dequant_input){
 	printf("%10f\n", dequant_input);
 }
 
+static int abs_cmp(const void *a, const void *b)
+{
+    return (*(int*)a) - (*(int*)b);
+}
+
+/* prune `rate` fraction (0–1) of the smallest‑magnitude weights */
+void prune_weights(LeNet5 *net, double rate)
+{
+    /* weights occupy the contiguous block [weight0_1 .. bias0_1)   :contentReference[oaicite:0]{index=0}:contentReference[oaicite:1]{index=1} */
+    int8_t *w_begin = (int8_t*)net->weight0_1;
+    int8_t *w_end   = (int8_t*)net->bias0_1;
+    size_t  N       = (size_t)(w_end - w_begin);
+
+    /* 1) copy |w| into temp buffer, find percentile threshold */
+    int *mag = (int*)malloc(N * sizeof(int));
+    for (size_t i = 0; i < N; ++i) mag[i] = abs((int)w_begin[i]);
+
+    qsort(mag, N, sizeof(int), abs_cmp);
+    int kth = mag[(size_t)(rate * N)];   /* 25‑th percentile */
+    free(mag);
+
+    /* 2) zero out any weight whose magnitude ≤ threshold */
+    for (size_t i = 0; i < N; ++i)
+        if (abs((int)w_begin[i]) <= kth) w_begin[i] = 0;
+}
+
 static void forward_qa(LeNet5 *lenet, Feature *features, double(*action)(double))
 {
 	// scale for quantization
