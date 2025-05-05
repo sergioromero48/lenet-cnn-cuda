@@ -7,17 +7,18 @@ def main():
         print(f"File not found: {path}", file=sys.stderr)
         return
 
-    # read only the first 100 bytes (weights)
+    # read entire file as signed 8-bit weights
     with open(path, "rb") as f:
-        data = f.read(100)
-    if len(data) < 100:
-        print(f"File too short: only {len(data)} bytes", file=sys.stderr)
-        return
-
-    # unpack as signed 8-bit ints
-    weights = struct.unpack("100b", data)
-    for i, w in enumerate(weights):
-        print(f"{i:3d}: {w}")
+        data = f.read()
+    # unpack all bytes as signed 8-bit ints
+    count = len(data)
+    weights = struct.unpack(f"{count}b", data)
+    # write all weights to a text file
+    out_path = "weights.txt"
+    with open(out_path, "w") as out_f:
+        for i, w in enumerate(weights):
+            out_f.write(f"{i}: {w}\n")
+    print(f"Wrote {count} weights to {out_path}")
 
 if __name__ == "__main__":
     main()
