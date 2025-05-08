@@ -20,7 +20,7 @@
 #define OUTPUT 10
 
 #define ALPHA  0.5
-#define QSCALE (1.0/64)
+#define QUANT_SCALE 127.0
 #define PADDING (LENGTH_KERNEL/2)
 
 typedef unsigned char uint8;

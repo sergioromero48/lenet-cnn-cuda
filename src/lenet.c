@@ -49,14 +49,14 @@ void forward_qa(const LeNet5 *lenet, Feature *features, double (*action)(double)
                 FOREACH(i1, GETLENGTH(**(input))) \
                     FOREACH(w0, GETLENGTH(weight[x][y])) \
                         FOREACH(w1, GETLENGTH(*(weight[x][y]))) { \
-                            int8_t q_weight = quantize(weight[x][y][w0][w1], scale_w); \
-                            double dq_weight = dequantize(q_weight, scale_w); \
+                            int8_t q_weight = quantize(weight[x][y][w0][w1]); \
+                            double dq_weight = dequantize(q_weight); \
                             (output[y][i0][i1]) += (input[x][i0 + w0][i1 + w1]) * dq_weight; \
                         } \
     FOREACH(j, GETLENGTH(output)) \
         FOREACH(i, GETCOUNT(output[j])) { \
-            int8_t q_bias = quantize(bias[j], scale_b); \
-            double dq_bias = dequantize(q_bias, scale_b); \
+            int8_t q_bias = quantize(bias[j]); \
+            double dq_bias = dequantize(q_bias); \
             ((double *)output[j])[i] = action(((double *)output[j])[i] + dq_bias); \
         } \
 }
@@ -119,22 +119,31 @@ void forward_qa(const LeNet5 *lenet, Feature *features, double (*action)(double)
 // Added printing, quantization, and dequantization here
 #define DOT_PRODUCT_FORWARD_QA(input,output,weight,bias,action, input_scale, weight_scale, bias_scale) \
 {                                                                                                             \
-    int input_len = GETLENGTH(weight);                                                                        \
-    int output_len = GETLENGTH(*weight);                                                                      \
-    for (int y = 0; y < output_len; ++y)                                                                      \
-        ((double *)output)[y] = 0.0; /* clear output */                                                       \
-    for (int x = 0; x < input_len; ++x) {                                                                     \
-        for (int y = 0; y < output_len; ++y) {                                                                \
-            double input_val = ((int8_t *)input)[x] * input_scale;                                             \
-            double weight_val = ((int8_t *)weight)[x * output_len + y] * weight_scale;                        \
-            ((double *)output)[y] += input_val * weight_val;                                                  \
-        }                                                                                                    \
-    }                                                                                                        \
-    for (int j = 0; j < output_len; ++j) {                                                                    \
-        double bias_val = ((int32_t *)bias)[j] * bias_scale;                                                  \
-        ((double *)output)[j] = action(((double *)output)[j] + bias_val);                                     \
-    }                                                                                                        \
-}
+	    int  input_len  = GETLENGTH(weight);                                                                      \
+	    int  output_len = GETLENGTH(*weight);                                                                     \
+	    double *act     = (double *)input;    /* your 120 floats */                                               \
+	    int8_t *w       = (int8_t *)weight;   /* quantized weights */                                             \
+	    int8_t *b       = (int8_t *)bias;     /* quantized biases */                                              \
+	                                                                                                             \
+	    /* zero out outputs */                                                                                   \
+	    for (int y = 0; y < output_len; ++y)                                                                      \
+	        ((double *)output)[y] = 0.0;                                                                          \
+	                                                                                                             \
+	    /* accumulate in_fp * dequantized_weight */                                                              \
+	    for (int x = 0; x < input_len; ++x) {                                                                     \
+	        double in_val = act[x];                                                                              \
+	        for (int y = 0; y < output_len; ++y) {                                                                \
+	            double w_val = dequantize(w[x * output_len + y]);                                   \
+	            ((double *)output)[y] += in_val * w_val;                                                          \
+	        }                                                                                                    \
+	    }                                                                                                        \
+	                                                                                                             \
+	    /* add dequantized biases + activation */                                                                 \
+	    for (int j = 0; j < output_len; ++j) {                                                                    \
+	        double b_val = dequantize(b[j]);                                                          \
+	        ((double *)output)[j] = action(((double *)output)[j] + b_val);                                        \
+	    }                                                                                                        \
+	}
 
 #define DOT_PRODUCT_BACKWARD(input,inerror,outerror,weight,wd,bd,actiongrad)	\
 {																				\
@@ -163,27 +172,20 @@ double relugrad(double y)
 }
 
 // Quantize floating to int8
-int8_t quantize(double x, double scale) {
+int8_t quantize(double value) {
 	
-	int q = (int)roundf(x / scale);
-    if (x >= 127){
-		q = 127;
-	} 
-    else if (x <= -127){
-		q = -127;
-	} 		
-	else if(q > 127){
-		q = 127;
-	}
-	else if(q < -127){
-		q = -127;
-	}
-    return (int8_t)q;
+	return (int8_t)(value * QUANT_SCALE);
 }
 
 // Dequantize int8 back to float
-double dequantize(int8_t q, double scale) {
-    return ((double)q) * scale;
+double dequantize(int8_t qval) {
+	double norm = (qval / QUANT_SCALE);
+	if (norm > 1.0) {
+		norm = 1.0;
+	} else if (norm < -1.0) {
+		norm = -1.0;
+	}
+    return norm;
 }
 
 void print_original(float original_input){
@@ -414,8 +416,8 @@ void TrainBatch_QAT(LeNet5 *qnet,
 // Quant-aware forward (uses int8 weights/biases + activation)
 void forward_qa(const LeNet5 *lenet, Feature *features, double (*action)(double))
 {
-    double scale_w = QSCALE, scale_b = QSCALE;
-    double input_scale = QSCALE;
+    double scale_w = QUANT_SCALE, scale_b = QUANT_SCALE;
+    double input_scale = QUANT_SCALE;
     CONVOLUTION_FORWARD_QA(features->input, features->layer1,
                             lenet->weight0_1, lenet->bias0_1,
                             action, scale_w, scale_b);

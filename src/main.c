@@ -70,7 +70,7 @@ void training_qat(LeNet5 *lenet, image *train_data, uint8 *train_label,
 
 	if (batch_idx >= warmup_batches &&
 	((batch_idx - warmup_batches) % prune_every == 0))
-	prune_weights(lenet, 0.25);
+	//prune_weights(lenet, 0.25);
 
 	if (i * 100 / total_size > pc)
 	printf("batch:%d  train:%2d%%\n",
