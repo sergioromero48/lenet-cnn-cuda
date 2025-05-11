@@ -16,6 +16,7 @@ uint8 Predict(LeNet5 *lenet, image input, const char(*resMat)[OUTPUT], uint8 cou
 初始化
 void Initial(LeNet5 *lenet);
 */
+#include <stdint.h>
 
 #pragma once
 
@@ -44,7 +45,7 @@ void Initial(LeNet5 *lenet);
 typedef unsigned char uint8;
 typedef uint8 image[28][28];
 
-
+/*
 typedef struct LeNet5
 {
 	double weight0_1[INPUT][LAYER1][LENGTH_KERNEL][LENGTH_KERNEL];
@@ -58,7 +59,21 @@ typedef struct LeNet5
 	double bias5_6[OUTPUT];
 
 }LeNet5;
+*/
+typedef struct LeNet5_q
+{
+	int8_t weight0_1[INPUT][LAYER1][LENGTH_KERNEL][LENGTH_KERNEL];
+	int8_t weight2_3[LAYER2][LAYER3][LENGTH_KERNEL][LENGTH_KERNEL];
+	int8_t weight4_5[LAYER4][LAYER5][LENGTH_KERNEL][LENGTH_KERNEL];
+	int8_t weight5_6[LAYER5 * LENGTH_FEATURE5 * LENGTH_FEATURE5][OUTPUT];
 
+	int8_t bias0_1[LAYER1];
+	int8_t bias2_3[LAYER3];
+	int8_t bias4_5[LAYER5];
+	int8_t bias5_6[OUTPUT];
+}LeNet5_q;
+
+/*
 typedef struct Feature
 {
 	double input[INPUT][LENGTH_FEATURE0][LENGTH_FEATURE0];
@@ -69,18 +84,30 @@ typedef struct Feature
 	double layer5[LAYER5][LENGTH_FEATURE5][LENGTH_FEATURE5];
 	double output[OUTPUT];
 }Feature;
+*/
+
+typedef struct Feature_q {
+    // normalization still produces doubles:
+    int8_t input[ INPUT ][ LENGTH_FEATURE0 ][ LENGTH_FEATURE0 ];
+    // every downstream layer & output is *really* int8:
+    int8_t layer1[ LAYER1 ][ LENGTH_FEATURE1 ][ LENGTH_FEATURE1 ];
+    int8_t layer2[ LAYER2 ][ LENGTH_FEATURE2 ][ LENGTH_FEATURE2 ];
+    int8_t layer3[ LAYER3 ][ LENGTH_FEATURE3 ][ LENGTH_FEATURE3 ];
+    int8_t layer4[ LAYER4 ][ LENGTH_FEATURE4 ][ LENGTH_FEATURE4 ];
+    int8_t layer5[ LAYER5 ][ LENGTH_FEATURE5 ][ LENGTH_FEATURE5 ];
+    int8_t output[ OUTPUT ];
+} Feature_q;
+
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-uint8 get_result(Feature *features, uint8 count);
-void  load_input (Feature *features, image input);
+uint8 Predict_q (LeNet5_q *lenet, image input, uint8 count);   /* NEW */
+void  Initial_q (LeNet5_q *lenet); 
 
-void  TrainBatch(LeNet5 *lenet, image *inputs, uint8 *labels, int batchSize);
-void  Train     (LeNet5 *lenet, image input, uint8 label);
-uint8 Predict   (LeNet5 *lenet, image input, uint8 count);
-void  Initial   (LeNet5 *lenet);
+uint8 get_result_q(const Feature_q *f, uint8 classes);
+void forward_q(LeNet5_q *lenet, Feature_q *features, float(*action)(float));
 
 #ifdef __cplusplus
 }

@@ -10,13 +10,14 @@
 
 #define FOREACH(i,count) for (int i = 0; i < count; ++i)
 
-#define CONVOLUTE_VALID(input,output,weight)											\
-{																						\
-	FOREACH(o0,GETLENGTH(output))														\
-		FOREACH(o1,GETLENGTH(*(output)))												\
-			FOREACH(w0,GETLENGTH(weight))												\
-				FOREACH(w1,GETLENGTH(*(weight)))										\
-					(output)[o0][o1] += (input)[o0 + w0][o1 + w1] * (weight)[w0][w1];	\
+#define CONVOLUTE_VALID(input,output,weight_array)                                        \
+{                                                                                       \
+    FOREACH(o0, GETLENGTH(output))                                                      \
+        FOREACH(o1, GETLENGTH(*(output)))                                               \
+            FOREACH(w0, GETLENGTH(weight_array))                                        \
+                FOREACH(w1, GETLENGTH(*(weight_array)))                                \
+                    (output)[o0][o1] += (input)[o0 + w0][o1 + w1] *                     \
+                                     dequantize(quantize((weight_array)[w0][w1]));      \
 }
 
 #define CONVOLUTE_FULL(input,output,weight)												\
@@ -35,7 +36,7 @@
 			CONVOLUTE_VALID(input[x], output[y], weight[x][y]);					\
 	FOREACH(j, GETLENGTH(output))												\
 		FOREACH(i, GETCOUNT(output[j]))											\
-		((double *)output[j])[i] = action(((double *)output[j])[i] + bias[j]);	\
+		((double *)output[j])[i] = action(((double *)output[j])[i] + dequantize(quantize(bias[j])));	\
 }
 
 #define CONVOLUTION_BACKWARD(input,inerror,outerror,weight,wd,bd,actiongrad)\
@@ -98,9 +99,9 @@
 {																			\
 	for (int x = 0; x < GETLENGTH(weight); ++x)								\
 		for (int y = 0; y < GETLENGTH(*weight); ++y)						\
-			((double *)output)[y] += ((double *)input)[x] * weight[x][y];	\
+			((double *)output)[y] += ((double *)input)[x] * dequantize(quantize(weight[x][y]));	\
 	FOREACH(j, GETLENGTH(bias))												\
-		((double *)output)[j] = action(((double *)output)[j] + bias[j]);	\
+		((double *)output)[j] = action(((double *)output)[j] + dequantize(quantize(bias[j])));	\
 }
 
 #define DOT_PRODUCT_BACKWARD(input,inerror,outerror,weight,wd,bd,actiongrad)	\
@@ -126,7 +127,19 @@ double relugrad(double y)
 {
 	return y > 0;
 }
-
+// Quantized functions
+int8_t quantize(double x) {
+	return (int8_t)(x * QUANT_SCALE);
+}
+double dequantize(int8_t x) {
+	double res = (double)x / QUANT_SCALE;
+	if (res > 1.0) {
+		res = 1.0;
+	} else if (res < -1.0) {
+		res = -1.0;
+	}
+	return res;
+}
 static void forward(LeNet5 *lenet, Feature *features, double(*action)(double))
 {
 	CONVOLUTION_FORWARD(features->input, features->layer1, lenet->weight0_1, lenet->bias0_1, action);
