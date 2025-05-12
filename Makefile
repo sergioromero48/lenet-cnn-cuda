@@ -61,7 +61,11 @@ run: all
 # run CUDA test program convenience target
 .PHONY: runcu
 runcu: directories $(CU_TEST_BIN)
-	@./$(CU_TEST_BIN) data model
+	@echo "Extracting first MNIST image to raw bytes"
+	@dd if=data/t10k-images-idx3-ubyte bs=1 skip=16 count=784 of=$(BUILD_DIR)/first.raw 2>/dev/null
+	@echo "Running CUDA-only inference"
+	@./$(CU_TEST_BIN) $(BUILD_DIR)/first.raw model/model.dat
+	@rm -f $(BUILD_DIR)/first.raw
 
 clean:
 	rm -rf $(BUILD_DIR)

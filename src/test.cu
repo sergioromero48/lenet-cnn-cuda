@@ -76,6 +76,7 @@ int main(int argc, char **argv)
     cudaEventSynchronize(t1);
 
     float ms = 0.0f;
+    float us = ms * 1000.0f;
     cudaEventElapsedTime(&ms, t0, t1);
 
     std::cout << "Prediction: " << int(pred) << " | Latency: " << ms << " ms" << std::endl;
