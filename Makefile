@@ -44,7 +44,7 @@ $(TEST_OBJ): $(TEST_SRC)
 
 # compile CUDA test object
 $(CU_TEST_OBJ): $(CU_TEST_SRC) $(SRC_DIR)/lenet.h $(SRC_DIR)/lenet_cuda.h
-	$(NVCC) -c $(CXXFLAGS) $< -o $@
+	$(NVCC) -O2 -std=c++17 -c $< -o $@
 
 # ---------- link test binary -------------------------------------
 $(BUILD_DIR)/test: $(TEST_OBJ) $(CPU_OBJ) $(CUDA_OBJ)
