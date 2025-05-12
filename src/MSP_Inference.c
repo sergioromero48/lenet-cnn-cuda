@@ -1,73 +1,79 @@
-/* main_lenet_lea.c  –  minimal MSP430/LEA inference harness
- *
- * ★ Build  (FR5994 example):
- *   msp430-gcc -mmcu=msp430fr5994 -I. -Os \
- *       main_lenet_lea.c lenet_quant.c \
- *       -ldsplib_fr5xx_3.40.00.00 \
- *       -o lenet_demo.elf
- *   msp430-objcopy -O ihex lenet_demo.elf lenet_demo.hex
- *   mspdebug rf2500 "prog lenet_demo.hex"
- */
+/* main.c – minimal LeNet-5 inference on MSP430FR5994 using DMA, FRAM2 */
+
 #include <msp430.h>
-#include "DSPLib/DSPLib.h"
+#include <stdint.h>
+#include <stdio.h>
 
-#include "lenet.h"
-#include "model.h"          /* weight0_1 … weight5_6 arrays */
+#include "lenet_quant.h"
+#include "model.h"
+#include "image_input.h"
 
-/*--------------- LEA / DSPLib housekeeping ----------------*/
-static void initLEA(void)
-{
-    /* 1.  Point LEA stack to top of 4‑KB leaRAM (0x3C00) */
-    extern uint16_t __LEA_MSP430_BASE;
-    LEACNF2  = (uint16_t)((uintptr_t)&__LEA_MSP430_BASE >> 2);
-    /* 2.  Enable the engine */
-    LEAPMCTL |= LEACMDEN;
+/* DMA helper for byte-wise copy using channel 0, 20-bit addresses */
+static inline void dma_memcpy20(const void *src20, void *dst20, uint16_t len) {
+    DMACTL4 = DMARMWDIS; /* allow FRAM DMA */
+    DMA0CTL &= ~DMAEN;
+    __data20_write_long((uintptr_t)&DMA0SA, (uintptr_t)src20);
+    __data20_write_long((uintptr_t)&DMA0DA, (uintptr_t)dst20);
+    DMA0SZ = len;
+    DMA0CTL = DMADT_0 | DMASRCINCR_3 | DMADSTINCR_3 | DMASRCBYTE | DMADSTBYTE | DMAEN;
+    while (DMA0CTL & DMAEN);
 }
 
-/*--------------- Network instance & helpers ---------------*/
-#pragma PERSISTENT(net)              /* TI compiler */
-#pragma LOCATION(net, 0x4400)        /* optional: place above 0x4400 */
-LeNet5_q net;
+/* Place the network struct into FRAM2 (.fr2) */
+#pragma DATA_SECTION(net, ".fr2")
+static LeNet5_q net;
 
-/* Copy the flat INT‑8 weight blobs from model.h into the
-   struct layout that lenet_quant.c expects */
-static void populateNetwork(void)
-{
-    /* layer 0‑1 */
-    memcpy(net.weight0_1, weight0_1, sizeof(net.weight0_1));
-    memcpy(net.bias0_1,   bias0_1,   sizeof(net.bias0_1));
+/* Weight loader using DMA */
+static void load_weights(void) {
+    const int8_t *cur;
+    uint32_t n;
 
-    memcpy(net.weight2_3, weight2_3, sizeof(net.weight2_3));
-    memcpy(net.bias2_3,   bias2_3,   sizeof(net.bias2_3));
+    /* conv1 */
+    cur = weight0_1;
+    n = INPUT * LAYER1 * LENGTH_KERNEL * LENGTH_KERNEL;
+    dma_memcpy20(cur, net.weight0_1, n);
+    cur += n;
 
-    memcpy(net.weight4_5, weight4_5, sizeof(net.weight4_5));
-    memcpy(net.bias4_5,   bias4_5,   sizeof(net.bias4_5));
+    /* conv2 */
+    cur = weight2_3;
+    n = LAYER2 * LAYER3 * LENGTH_KERNEL * LENGTH_KERNEL;
+    dma_memcpy20(cur, net.weight2_3, n);
+    cur += n;
 
-    memcpy(net.weight5_6, weight5_6, sizeof(net.weight5_6));
-    memcpy(net.bias5_6,   bias5_6,   sizeof(net.bias5_6));
+    /* conv3 */
+    cur = weight4_5;
+    n = LAYER4 * LAYER5 * LENGTH_KERNEL * LENGTH_KERNEL;
+    dma_memcpy20(cur, net.weight4_5, n);
+    cur += n;
+
+    /* fc */
+    cur = weight5_6;
+    n = LAYER5 * LENGTH_FEATURE5 * LENGTH_FEATURE5 * OUTPUT;
+    dma_memcpy20(cur, net.weight5_6, n);
+    cur += n;
+
+    /* biases */
+    dma_memcpy20(bias0_1, net.bias0_1, LAYER1);
+    dma_memcpy20(bias2_3, net.bias2_3, LAYER3);
+    dma_memcpy20(bias4_5, net.bias4_5, LAYER5);
+    dma_memcpy20(bias5_6, net.bias5_6, OUTPUT);
 }
 
-/*--------------- Placeholder input image ------------------*/
-#pragma PERSISTENT(dummy)
-image dummy = { 0 };             /* all‑zero 28×28 */
+/* ReLU activation */
+static float relu(float x) { return x > 0 ? x : 0; }
 
-/*--------------- main -------------------------------------*/
-volatile uint8_t resultClass;     /* debugger watch point */
+int main(void) {
+    WDTCTL = WDTPW | WDTHOLD; /* stop watchdog */
+    load_weights();           /* DMA copies (~5ms) */
 
-int main(void)
-{
-    WDTCTL = WDTPW | WDTHOLD;    /* stop watchdog          */
-#ifdef __MSP430FR5XX_6XX_FAMILY__
-    PM5CTL0 &= ~LOCKLPM5;        /* unlock GPIO if FRAM    */
-#endif
+    Feature_q feat = {0};
+    forward_q(&net, &feat, relu);
+    printf("Predicted class = %d\r\n", (int)get_result_q(&feat, OUTPUT));
 
-    initLEA();                   /* turn on accelerator    */
-    populateNetwork();           /* load weights/biases    */
-
-    /* --- single inference --- */
-    resultClass = Predict_q(&net, dummy, 10);
-
-    /* halt here – inspect resultClass or add your own output */
-    __no_operation();
-    while (1) ;                  /* LPM later if you like  */
+    while (1) __no_operation();
 }
+
+/* HAL callbacks stubs */
+void ButtonCallback_SW1(uint8_t s) { (void)s; }
+void ButtonCallback_SW2(uint8_t s) { (void)s; }
+void TimerCallback(void) { }
