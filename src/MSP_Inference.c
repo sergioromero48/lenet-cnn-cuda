@@ -9,9 +9,9 @@
  *   mspdebug rf2500 "prog lenet_demo.hex"
  */
 #include <msp430.h>
-#include "DSPLib.h"
+#include "DSPLib/DSPLib.h"
 
-#include "lenet_quant.h"
+#include "lenet.h"
 #include "model.h"          /* weight0_1 … weight5_6 arrays */
 
 /*--------------- LEA / DSPLib housekeeping ----------------*/
@@ -25,7 +25,8 @@ static void initLEA(void)
 }
 
 /*--------------- Network instance & helpers ---------------*/
-#pragma PERSISTENT(net)          /* keep in FRAM */
+#pragma PERSISTENT(net)              /* TI compiler */
+#pragma LOCATION(net, 0x4400)        /* optional: place above 0x4400 */
 LeNet5_q net;
 
 /* Copy the flat INT‑8 weight blobs from model.h into the
